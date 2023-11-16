@@ -1,0 +1,29 @@
+# common build output
+/bin/
+/build/
+*.deb
+
+# IDEs
+.idea/
+.vscode/
+.DS_Store
+
+# deployment
+.terraform/
+
+# test binary
+*.test
+
+# coverage
+*.cov
+coverage.html
+gl-code-quality-report.json
+
+# temp files
+*~
+.*.swp
+*.orig
+*.rej
+*.tmp
+
+bulk-loagen

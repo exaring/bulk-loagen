@@ -1,0 +1,16 @@
+# netbox-host:
+# netbox-scheme:
+# netbox-token:
+
+listen-addr: 0.0.0.0:8080
+
+tenants:
+  default:
+    name: Sample Company
+    short: Sample
+    street: Sample Street 1
+    city: Sample City
+    noc: Sample NOC
+    email: noc@example.com
+    # phone:
+    expirydays: 50

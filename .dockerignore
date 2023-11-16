@@ -1,0 +1,5 @@
+*
+!internal/
+!pkg/
+!go.*
+!main.go
