@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -238,7 +239,7 @@ func (s *Service) rearPorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := fmt.Sprintf("LOA_%s_%s_%s.pdf", r.URL.Query().Get("partner"), time.Now().Format("2006-01-02"), *siteRes.GetPayload().Name)
+	filename := fmt.Sprintf("LOA_%s_%s_%s.pdf", strings.ReplaceAll(r.URL.Query().Get("partner"), " ", ""), time.Now().Format("2006-01-02"), *siteRes.GetPayload().Name)
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
