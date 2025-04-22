@@ -21,7 +21,7 @@ type TemplateData struct {
 	DemarcPanel   string
 	DemarcPort    string
 	Device        string
-	RearPorts     map[int64]string
+	RearPorts     map[int32]string
 	RearPortID    int
 	OurName       string
 	OurNameShort  string

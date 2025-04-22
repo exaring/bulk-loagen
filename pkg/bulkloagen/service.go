@@ -1,6 +1,7 @@
 package bulkloagen
 
 import (
+	"context"
 	"embed"
 	_ "embed"
 	"errors"
@@ -13,9 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	httptransport "github.com/go-openapi/runtime/client"
-	"github.com/netbox-community/go-netbox/netbox/client"
-	"github.com/netbox-community/go-netbox/netbox/client/dcim"
+	"github.com/netbox-community/go-netbox/v4"
 	"go.uber.org/zap"
 
 	"github.com/exaring/bulk-loagen/internal"
@@ -33,7 +32,7 @@ type Service struct {
 	cfg    *config.Config
 	logger *zap.Logger
 
-	nb *client.NetBoxAPI
+	nb *netbox.APIClient
 }
 
 func NewService(cfg *config.Config) (*Service, error) {
@@ -45,10 +44,10 @@ func NewService(cfg *config.Config) (*Service, error) {
 
 	s.logger.Sugar().Infof("initializing %s", internal.Name)
 
-	transport := httptransport.New(cfg.NetBoxHost, client.DefaultBasePath, []string{cfg.NetBoxScheme})
-	transport.DefaultAuthentication = httptransport.APIKeyAuth("Authorization", "header", "Token "+cfg.NetBoxToken)
-
-	s.nb = client.New(transport, nil)
+	s.nb = netbox.NewAPIClientFor(
+		cfg.NetBoxScheme+"://"+cfg.NetBoxHost,
+		cfg.NetBoxToken,
+	)
 
 	s.Get("/", s.index)
 	s.Get("/api/v1/devices/{deviceID:[0-9]+}", s.devices)
@@ -83,24 +82,19 @@ func (s *Service) devices(w http.ResponseWriter, r *http.Request) {
 		rearPortID = 0
 	}
 
-	dev := dcim.NewDcimDevicesReadParams()
-
-	dev.ID, err = strconv.ParseInt(deviceID, 10, 64)
+	devID, err := strconv.ParseInt(deviceID, 10, 32)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot parse device id as integer: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	devRes, err := s.nb.Dcim.DcimDevicesRead(dev, nil)
+	devRes, _, err := s.nb.DcimAPI.DcimDevicesRetrieve(context.Background(), int32(devID)).Execute()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot get device read: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	rpp := dcim.NewDcimRearPortsListParams()
-	rpp.DeviceID = &deviceID
-
-	res, err := s.nb.Dcim.DcimRearPortsList(rpp, nil)
+	res, _, err := s.nb.DcimAPI.DcimRearPortsList(context.Background()).DeviceId([]int32{devRes.Id}).Execute()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot get rear port list: %v", err), http.StatusInternalServerError)
 		return
@@ -115,11 +109,11 @@ func (s *Service) devices(w http.ResponseWriter, r *http.Request) {
 	data := &TemplateData{}
 	data.Version = internal.Version
 
-	rearp := map[int64]string{}
+	rearp := map[int32]string{}
 
-	for _, v := range res.GetPayload().Results {
-		data.Device = *v.Device.Name
-		rearp[v.ID] = *v.Name
+	for _, v := range res.GetResults() {
+		data.Device = v.Device.GetName()
+		rearp[v.GetId()] = v.GetName()
 	}
 
 	data.RearPorts = rearp
@@ -127,8 +121,8 @@ func (s *Service) devices(w http.ResponseWriter, r *http.Request) {
 
 	tenant := "default"
 
-	if devRes.GetPayload().Tenant != nil {
-		tenant = *devRes.GetPayload().Tenant.Slug
+	if setTenant := retrieveNullable(devRes.Tenant); setTenant.Slug != "" {
+		tenant = setTenant.Slug
 	}
 
 	if err := s.mergeTenantInfo(tenant, data); err != nil {
@@ -149,67 +143,41 @@ func (s *Service) rearPorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rpp := dcim.NewDcimRearPortsReadParams()
-	rpp.ID = int64(rearPortID)
-
-	rppRes, err := s.nb.Dcim.DcimRearPortsRead(rpp, nil)
+	rppRes, _, err := s.nb.DcimAPI.DcimRearPortsRetrieve(context.Background(), int32(rearPortID)).Execute()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot get rear port read: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	dev := dcim.NewDcimDevicesReadParams()
-	dev.ID = rppRes.GetPayload().Device.ID
-
-	devRes, err := s.nb.Dcim.DcimDevicesRead(dev, nil)
+	devRes, _, err := s.nb.DcimAPI.DcimDevicesRetrieve(context.Background(), rppRes.GetDevice().Id).Execute()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot get device read: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	site := dcim.NewDcimSitesReadParams()
-	site.ID = devRes.GetPayload().Site.ID
-
-	siteRes, err := s.nb.Dcim.DcimSitesRead(site, nil)
+	siteRes, _, err := s.nb.DcimAPI.DcimSitesRetrieve(context.Background(), devRes.GetSite().Id).Execute()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot get site read: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	if devRes.GetPayload().Rack == nil {
+	if !devRes.Rack.IsSet() {
 		http.Error(w, "Cannot get device's rack", http.StatusInternalServerError)
 		return
 	}
 
-	rack := dcim.NewDcimRacksReadParams()
-	rack.ID = devRes.GetPayload().Rack.ID
-
-	rackRes, err := s.nb.Dcim.DcimRacksRead(rack, nil)
+	rackRes, _, err := s.nb.DcimAPI.DcimRacksRetrieve(context.Background(), devRes.GetRack().Id).Execute()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Cannot get rack read: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	facilityID := rackRes.GetPayload().FacilityID
-	if facilityID == nil {
-		http.Error(w, "Cannot get rack facility id", http.StatusInternalServerError)
-		return
-	}
+	facilityID := retrieveNullable(rackRes.FacilityId)
+	rackPos := retrieveNullable(devRes.Position)
+	devName := retrieveNullable(devRes.Name)
 
-	rackPos := devRes.GetPayload().Position
-	if rackPos == nil {
-		http.Error(w, "Cannot get device's rack position", http.StatusInternalServerError)
-		return
-	}
-
-	devName := devRes.GetPayload().Name
-	if devName == nil {
-		http.Error(w, "Cannot get device name", http.StatusInternalServerError)
-		return
-	}
-
-	rppName := rppRes.GetPayload().Name
-	if rppName == nil {
+	rppName := rppRes.Name
+	if rppName == "" {
 		http.Error(w, "Cannot get rear port name", http.StatusInternalServerError)
 		return
 	}
@@ -218,15 +186,15 @@ func (s *Service) rearPorts(w http.ResponseWriter, r *http.Request) {
 		Partner:       r.URL.Query().Get("partner"),
 		PartnerStreet: r.URL.Query().Get("partner_street"),
 		PartnerCity:   r.URL.Query().Get("partner_city"),
-		Site:          siteRes.GetPayload().Facility,
-		DemarcPanel:   fmt.Sprintf("Rack %s U%d - %s", *facilityID, int(*rackPos), *devName),
-		DemarcPort:    *rppName,
+		Site:          siteRes.GetFacility(),
+		DemarcPanel:   fmt.Sprintf("Rack %s U%g - %s", facilityID, rackPos, devName),
+		DemarcPort:    rppName,
 	}
 
 	tenant := "default"
 
-	if devRes.GetPayload().Tenant != nil {
-		tenant = *devRes.GetPayload().Tenant.Slug
+	if devRes.Tenant.IsSet() && devRes.GetTenant().Slug != "" {
+		tenant = devRes.GetTenant().Slug
 	}
 
 	if err := s.mergeTenantInfo(tenant, data); err != nil {
@@ -239,7 +207,7 @@ func (s *Service) rearPorts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := fmt.Sprintf("LOA_%s_%s_%s.pdf", strings.ReplaceAll(r.URL.Query().Get("partner"), " ", ""), time.Now().Format("2006-01-02"), *siteRes.GetPayload().Name)
+	filename := fmt.Sprintf("LOA_%s_%s_%s.pdf", strings.ReplaceAll(r.URL.Query().Get("partner"), " ", ""), time.Now().Format("2006-01-02"), siteRes.Name)
 
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
@@ -260,5 +228,18 @@ func (s *Service) mergeTenantInfo(tenant string, data *TemplateData) error {
 		return nil
 	}
 
-	return errors.New("unknown tenant")
+	return fmt.Errorf("%w: %s", errors.New("unknown tenant"), tenant)
+}
+
+type nullable[K any] interface {
+	IsSet() bool
+	Get() *K
+}
+
+func retrieveNullable[N any, K nullable[N]](nullable K) N {
+	if nullable.IsSet() && nullable.Get() != nil {
+		return *nullable.Get()
+	}
+
+	return *new(N)
 }
