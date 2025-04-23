@@ -29,7 +29,7 @@ func main() {
 		logger.Fatal("parsing config", zap.Error(err))
 	}
 
-	svc, err := bulkloagen.NewService(cfg)
+	svc, err := bulkloagen.NewService(cfg, "bulk-loagen", "dev")
 	if err != nil {
 		logger.Fatal("instantiating service", zap.Error(err))
 	}

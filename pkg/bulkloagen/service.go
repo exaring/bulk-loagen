@@ -17,7 +17,6 @@ import (
 	"github.com/netbox-community/go-netbox/v4"
 	"go.uber.org/zap"
 
-	"github.com/exaring/bulk-loagen/internal"
 	"github.com/exaring/bulk-loagen/pkg/config"
 )
 
@@ -29,20 +28,24 @@ var staticFiles embed.FS
 
 type Service struct {
 	chi.Router
-	cfg    *config.Config
-	logger *zap.Logger
+	cfg     *config.Config
+	logger  *zap.Logger
+	name    string
+	version string
 
 	nb *netbox.APIClient
 }
 
-func NewService(cfg *config.Config) (*Service, error) {
+func NewService(cfg *config.Config, name, version string) (*Service, error) {
 	s := &Service{
-		cfg:    cfg,
-		Router: chi.NewRouter(),
-		logger: zap.L().With(zap.String("component", internal.Name)),
+		cfg:     cfg,
+		Router:  chi.NewRouter(),
+		logger:  zap.L().With(zap.String("component", name)),
+		name:    name,
+		version: version,
 	}
 
-	s.logger.Sugar().Infof("initializing %s", internal.Name)
+	s.logger.Sugar().Infof("initializing %s", name)
 
 	s.nb = netbox.NewAPIClientFor(
 		cfg.NetBoxScheme+"://"+cfg.NetBoxHost,
@@ -64,9 +67,10 @@ func (s *Service) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := &TemplateData{}
-	data.Version = internal.Version
-	data.ExampleDeviceURL = "/api/v1/devices/{deviceID}"
+	data := &TemplateData{
+		Version:          s.version,
+		ExampleDeviceURL: "/api/v1/devices/{deviceID}",
+	}
 
 	if err := t.ExecuteTemplate(w, "index.html", data); err != nil {
 		http.Error(w, fmt.Sprintf("Cannot execute template: %v", err), http.StatusInternalServerError)
@@ -106,8 +110,9 @@ func (s *Service) devices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := &TemplateData{}
-	data.Version = internal.Version
+	data := &TemplateData{
+		Version: s.version,
+	}
 
 	rearp := map[int32]string{}
 
